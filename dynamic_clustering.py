@@ -8,7 +8,7 @@ from sklearn.cluster import DBSCAN, KMeans
 
 from scipy.stats import chi2_contingency
   
-class SpikeClusterer:
+class DetectionClustering:
   def __init__(self, min_cluster_size:int, max_cluster_size:int, constant_threshold:float, min_eps:float, max_eps:float, n_bins_eps:int, cluster_exclusion_condition=False, cluster_exclusion_agg_map={}):
     self.min_cluster_size = min_cluster_size
     self.max_cluster_size = max_cluster_size
@@ -18,6 +18,14 @@ class SpikeClusterer:
     self.n_bins_eps = n_bins_eps
     self.cluster_exclusion_condition = cluster_exclusion_condition
     self.cluster_exclusion_agg_map = cluster_exclusion_agg_map
+
+  def fit_predict(self, data: pd.DataFrame):
+    if hasattr(self, 'dbscan'):
+      print("already fitted")
+      return self
+    data_tsne = self.prepare_clustering(data)
+    labels = self.perform_dynamic_clustering(data_tsne)
+    return labels
   
   def prepare_clustering(self, data: pd.DataFrame):
     
@@ -60,6 +68,7 @@ class SpikeClusterer:
         return
     tsne = TSNE()
     x_tsne = tsne.fit_transform(x)
+    self.tsne = tsne
     
     data_tsne = pd.DataFrame(x_tsne)
     data_tsne.columns = ['tsne_1', 'tsne_2']
@@ -87,6 +96,7 @@ class SpikeClusterer:
     print(f"Best eps found: {best_eps}, with coverage: {max(coverages)}")
     best_dbscan = DBSCAN(eps=best_eps, min_samples = self.min_cluster_size)
     labels = best_dbscan.fit_predict(data)
+    self.dbscan = best_dbscan
     unique_labels = np.unique(labels)
     print(f"Found {len(unique_labels[unique_labels != -1])} clusters before validation")
     
