@@ -71,7 +71,7 @@ class SpikeClusterer:
     if data.empty:
       return np.array([])
     
-    epses = range(self.min_eps, self.max_eps, (self.max_eps - self.min_eps)/self.n_bins_eps)
+    epses = np.linspace(self.min_eps, self.max_eps, self.n_bins_eps)
     coverages = []
 
     
