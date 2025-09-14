@@ -14,6 +14,12 @@ The remaining features are applied with a Standard Scaler and OneHotEncoder. We 
 ### Second clustering
 In the second round of clustering, our goal is to ensure that cluster coverage and size conditions are met, while keeping the clusters pure and aligned with any other user provided conditions. This requires noise removal, thus using DBSCAN. 
 To facilitate this, we dynamically iterate over a set of epsilons as specified by the user, and examine the coverage of all clusters meeting the provided size and conditional criteria. The setting with the largest coverage is chosen as the final clustering model.
+### Notes on design choices
+#### t-SNE for clustering:
+Although PCA is used earlier in the process for dimensionality reduction and potential inverse transformations, we found that t-SNE produces significantly better cluster separation for our specific business context. Therefore, t-SNE is applied before the second round of clustering to capture non-linear relationships and hidden patterns that PCA alone might miss.
+#### Coverage as eps selection criterion:
+When choosing the optimal eps for DBSCAN, we prioritize maximum coverage of valid clusters. This means that the selected eps maximizes the number of data points assigned to clusters that satisfy both size and user-defined validity conditions. This approach ensures that clusters are not only pure but also include as much relevant data as possible, which is crucial in practical applications where coverage is important.
+Alternative metrics (e.g., silhouette score) could be applied, but in our business context, coverage proved to be the most effective measure.
 
 ## Usage / Instructions
 ```
