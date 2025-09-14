@@ -7,25 +7,35 @@ from sklearn.manifold import TSNE
 from sklearn.cluster import DBSCAN, KMeans
 
 from scipy.stats import chi2_contingency
+from typing import Union, Callable
   
 class DetectionClustering:
-  def __init__(self, min_cluster_size:int, max_cluster_size:int, constant_threshold:float, min_eps:float, max_eps:float, n_bins_eps:int, cluster_exclusion_condition=False, cluster_exclusion_agg_map={}):
+  def __init__(self, min_cluster_size: int, constant_threshold: float, min_eps: float, max_eps: float, n_bins_eps: int,
+    cluster_feature_map: dict = None, cluster_agg_map: dict = None, cluster_exclusion_condition: Union[str, Callable] = None):
     self.min_cluster_size = min_cluster_size
     self.max_cluster_size = max_cluster_size
     self.constant_threshold = constant_threshold
     self.min_eps = min_eps
     self.max_eps = max_eps
     self.n_bins_eps = n_bins_eps
+    self.cluster_feature_map = cluster_feature_map or {}
+    self.cluster_agg_map = cluster_agg_map or {}
     self.cluster_exclusion_condition = cluster_exclusion_condition
-    self.cluster_exclusion_agg_map = cluster_exclusion_agg_map
 
-  def fit_predict(self, data: pd.DataFrame):
-    if hasattr(self, 'dbscan'):
+  def fit_predict(self, data: pd.DataFrame, validate: bool = True):
+    if hasattr(self, "dbscan"):
       print("already fitted")
       return self
+
     data_tsne = self.prepare_clustering(data)
     labels = self.perform_dynamic_clustering(data_tsne)
-    return labels
+    data["cluster"] = labels
+
+    if validate:
+      data_valid = self.filter_valid_clusters(data)
+      return data_valid
+    else:
+      return data
   
   def prepare_clustering(self, data: pd.DataFrame):
     
@@ -103,31 +113,48 @@ class DetectionClustering:
     return labels
   
   
-  def filter_valid_clusters(self, data: pd.DataFrame, group_name: str) -> pd.DataFrame:
+  def filter_valid_clusters(self, data: pd.DataFrame) -> pd.DataFrame:
     print(f"\nStarting cluster validation with {len(data)} records")
 
-    if 'cluster' not in data.columns:
+    if "cluster" not in data.columns:
       print("Need to define a cluster variable. Returning unchanged data.")
       return data
 
-    data_agg = data.groupby('cluster').agg(self.cluster_exclusion_agg_map).reset_index()
+    for col, func in self.cluster_feature_map.items():
+      data[col] = func(data)
+
+    agg_map = {}
+    for col, agg in self.cluster_agg_map.items():
+      if isinstance(agg, tuple):
+        base_col, func = agg
+        agg_map.setdefault(base_col, []).append(func)
+      else:
+        agg_map[col] = agg
+
+    data_agg = data.groupby("cluster").agg(agg_map).reset_index()
+    data_agg.columns = ["_".join(map(str, col)).strip("_") if isinstance(col, tuple) else col for col in data_agg.columns]
 
     print(f"Calculated metrics for {len(data_agg)} clusters")
-    data_agg.columns = ['cluster'] + list(self.cluster_exclusion_agg_map.keys())
 
-    exclusion_clusters = data_agg[self.cluster_exclusion_condition]['cluster'].tolist()
+    if self.cluster_exclusion_condition is None:
+      valid_clusters = [c for c in data["cluster"].unique() if c != -1]
+    else:
+      if isinstance(self.cluster_exclusion_condition, str):
+        mask = data_agg.eval(self.cluster_exclusion_condition)
+      else:
+        mask = self.cluster_exclusion_condition(data_agg)
 
-    valid_clusters = [cluster for cluster in list(set(data['cluster'])) if cluster != -1 and cluster not in exclusion_clusters]
+      exclusion_clusters = data_agg.loc[mask, "cluster"].tolist()
+      valid_clusters = [cluster for cluster in data["cluster"].unique() if cluster != -1 and cluster not in exclusion_clusters]
 
     print(f"Found {len(valid_clusters)} valid clusters after validation")
 
-
-    if len(valid_clusters) == 0:
+    if not valid_clusters:
       print("No clusters meeting the criteria found.")
       return None
 
-    data = data[data['cluster'].isin(valid_clusters)]
-    data = data.merge(data_agg, on='cluster', how='left')
+    data = data[data["cluster"].isin(valid_clusters)]
+    data = data.merge(data_agg, on="cluster", how="left")
     print(f"Final output contains {len(data)} records in {len(valid_clusters)} clusters")
     return data
     
@@ -165,6 +192,8 @@ class DetectionClustering:
     data_corr_num = data_num.corr().abs()
     upper = data_corr_num.where(np.triu(np.ones(data_corr_num.shape), k=1).astype(bool))
     to_drop_num = [col for col in upper.columns if any(upper[col] > 0.8)]
+    if to_drop_num:
+      print(f"Dropping {len(to_drop_num)} numerical columns due to high correlation.")
     data_num = data_num.drop(to_drop_num, axis=1)
     
     #categorical correlation
@@ -181,14 +210,18 @@ class DetectionClustering:
             _, p_value, _, _ = chi2_contingency(pd.crosstab(data[col1], data[col2]))
             if p_value >= 0.05:
               to_drop_cat.append(col2)
-          except:
-            pass
+          except Exception as e:
+            print(f"Chi2 failed for {col1} vs {col2}: {e}")
         else:
           if cardinality_col1 > 1000:
+            print(f"Dropping {col1} due to very high cardinality ({cardinality_col1})")
             to_drop_cat.append(col1)
           if cardinality_col2 > 1000:
+            print(f"Dropping {col2} due to very high cardinality ({cardinality_col2})")
             to_drop_cat.append(col2)
     to_drop_cat = list(set(to_drop_cat))
+    if to_drop_cat:
+      print(f"Dropping {len(to_drop_cat)} categorical columns: {to_drop_cat}")
     data_cat = data_cat.drop(to_drop_cat, axis = 1)
     
     return pd.concat([data_num, data_cat], axis = 1)
